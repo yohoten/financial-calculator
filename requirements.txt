@@ -1,0 +1,7 @@
+# 项目运行依赖
+# 安装命令：python -m pip install -r requriment.txt
+
+numpy
+pandas
+matplotlib
+openpyxl
