@@ -31,8 +31,7 @@ core.py —— 货币时间价值与资本成本核心计算引擎
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Sequence
 
 import numpy as np
 
@@ -40,6 +39,7 @@ __all__ = [
     "FinanceError",
     "fv_compound",
     "pv_compound",
+    "effective_annual_rate",
     "fva_ordinary",
     "pva_ordinary",
     "fva_due",
@@ -80,6 +80,42 @@ def _check_rate(r: float) -> float:
     return float(r)
 
 
+def _check_freq(m: float, label: str = "计息/付息次数") -> int:
+    """计息（付息）频率校验：必须为不小于 1 的整数。
+
+    常见口径：1 = 年、2 = 半年、4 = 季、12 = 月、365 = 日。
+    若不做校验，m = 0 会抛出裸的 ZeroDivisionError，m < 0 更糟——
+    会静默返回一个毫无意义的数值结果，属于"算出结果但结果无意义"的典型情形。
+    """
+    try:
+        mi = int(m)
+    except (TypeError, ValueError):
+        raise FinanceError(f"{label}必须为正整数，当前为 {m!r}。") from None
+    if abs(float(m) - mi) > 1e-9 or mi < 1:
+        raise FinanceError(
+            f"{label}必须为不小于 1 的整数（1=年／2=半年／4=季／12=月），当前为 {m}。"
+        )
+    return mi
+
+
+def _check_tax_rate(tax_rate: float) -> float:
+    """所得税税率校验：须落在 [0, 1) 区间。
+
+    税率 >= 1 会把税后成本算成负数（"-3.24% 的资本成本"），
+    属于数学上可算、经济上荒谬的结果，必须在入口拦截。
+    """
+    if not 0.0 <= float(tax_rate) < 1.0:
+        raise FinanceError(f"所得税税率须在 [0, 1) 区间内，当前为 {tax_rate}。")
+    return float(tax_rate)
+
+
+def _check_flotation(flotation_cost: float) -> float:
+    """筹资费率校验：须落在 [0, 1) 区间（100% 筹费用意味着净筹资额归零）。"""
+    if not 0.0 <= float(flotation_cost) < 1.0:
+        raise FinanceError(f"筹资费率须在 [0, 1) 区间内，当前为 {flotation_cost}。")
+    return float(flotation_cost)
+
+
 # =============================================================================
 # 1. 复利终值 / 现值（第 3 章）
 # =============================================================================
@@ -104,6 +140,7 @@ def pv_compound(fv: float, r: float, n: float, m: int = 1) -> float:
     741372.92
     """
     _check_periods(n)
+    m = _check_freq(m)
     _check_rate(r / m)
     return float(fv) / (1.0 + r / m) ** (n * m)
 
@@ -121,6 +158,7 @@ def fv_compound(pv: float, r: float, n: float, m: int = 1) -> float:
     164700.95
     """
     _check_periods(n)
+    m = _check_freq(m)
     _check_rate(r / m)
     return float(pv) * (1.0 + r / m) ** (n * m)
 
@@ -131,6 +169,7 @@ def effective_annual_rate(r: float, m: int = 1) -> float:
         EAR = (1 + r/m)^m - 1
     用于量化"计息频率"对真实资金成本的影响。
     """
+    m = _check_freq(m)
     _check_rate(r / m)
     return (1.0 + r / m) ** m - 1.0
 
@@ -234,6 +273,7 @@ def cost_of_debt(
     price: float,
     tax_rate: float = 0.0,
     freq: int = 1,
+    flotation_cost: float = 0.0,
 ) -> Dict[str, float]:
     """
     债权资本成本（到期收益率法 YTM / IRR 法）—— 精确算法。
@@ -245,39 +285,62 @@ def cost_of_debt(
 
     参数
     ----
-    face_value  : 债券面值（到期偿还额）
-    coupon_rate : 票面年利率（小数）
-    years       : 债券期限（年）
-    price       : 发行价/市价（净筹资额）
-    tax_rate    : 所得税税率（用于计算税后成本，体现税盾效应）
-    freq        : 每年付息次数（1=年付，2=半年付）
+    face_value     : 债券面值（到期偿还额）
+    coupon_rate    : 票面年利率（小数）
+    years          : 债券期限（年）
+    price          : 发行价/市价
+    tax_rate       : 所得税税率（用于计算税后成本，体现税盾效应）
+    freq           : 每年付息次数（1=年付，2=半年付，4=季付）
+    flotation_cost : 筹资费率 f（发行费用 / 发行价）。净筹资额 = price × (1 - f)。
+                     国内教材的债务成本公式分母为"发行价 × (1 - f)"，为使计算结果
+                     与教材口径可比，此处提供同口径参数；默认 0 表示不含筹资费用。
 
     返回
     ----
-    dict: 税前资本成本(期间)、税前年化资本成本、税后年化资本成本、税盾节省额
+    dict: 税前资本成本(期间)、税前年化资本成本、税后年化资本成本（三种口径）、
+          税盾节省额、净筹资额。三种税后口径在 freq = 1 时完全相等，freq > 1 时的
+          差异见《开发报告》"口径边界声明"一节。
+
+    口径说明
+    --------
+    期间利率 → 年化利率使用有效年利率（EAR）换算，而非简单乘以 freq：
+        k_annual = (1 + k_period)^freq - 1
     """
-    N = int(years) * int(freq)
-    if N <= 0:
-        raise FinanceError("债券期限（年）× 每年付息次数 必须为正整数。")
-    if price <= 0:
-        raise FinanceError("债券发行价必须大于 0。")
+    freq = _check_freq(freq, "每年付息次数")
+    _check_tax_rate(tax_rate)
+    f = _check_flotation(flotation_cost)
+    if int(years) <= 0:
+        raise FinanceError("债券期限（年）必须为正整数。")
+
+    N = int(years) * freq
+    net_price = float(price) * (1.0 - f)         # 扣除筹资费用后的净筹资额
+    if net_price <= 0:
+        raise FinanceError("净筹资额（发行价 × (1 - 筹资费率)）必须大于 0。")
 
     c = face_value * coupon_rate / freq
     flows = np.array([c] * N)
     flows[-1] += face_value                      # 最后一期还本
 
-    k_period = irr(np.concatenate(([-price], flows)), guess=coupon_rate / freq)
+    k_period = irr(np.concatenate(([-net_price], flows)), guess=coupon_rate / freq)
     k_pre_y = (1.0 + k_period) ** freq - 1.0     # 期间利率 → 年化有效利率
-    k_after_y = k_pre_y * (1.0 - tax_rate)       # 税盾效应
+
+    # —— 税后成本的三种口径（freq = 1 时三者完全相等）——
+    k_after_y = cost_of_debt_after_tax(k_pre_y, tax_rate)                      # 项目主口径：EAR × (1-T)
+    k_after_strict = (1.0 + k_period * (1.0 - tax_rate)) ** freq - 1.0         # 严格口径：先对每期利息计税、再年化
+    k_after_simple = (k_period * freq) * (1.0 - tax_rate)                      # 教材简化：名义年利率 × (1-T)
     shield = k_pre_y * tax_rate
 
     return {
         "税前期间资本成本": k_period,
         "税前年化资本成本": k_pre_y,
         "税后年化资本成本": k_after_y,
+        "税后年化资本成本(严格口径)": k_after_strict,
+        "税后年化资本成本(教材简化)": k_after_simple,
         "税盾节省(百分点)": shield * 100,
         "年利息支出": c * freq,
         "期限(期数)": float(N),
+        "净筹资额": net_price,
+        "每年付息次数": float(freq),
     }
 
 
@@ -287,21 +350,31 @@ def cost_of_debt_approx(
     years: int,
     price: float,
     tax_rate: float = 0.0,
+    flotation_cost: float = 0.0,
 ) -> Dict[str, float]:
     """
     债权资本成本 —— 教材近似公式法（用于与 IRR 法互验）：
 
-        Kd(税前) ≈ [F*coupon + (F - P)/N] / [(F + P)/2]
-        Kd(税后)  = Kd(税前) * (1 - T)
+        Kd(税前) ≈ [F*coupon + (F - P_net)/N] / [(F + P_net)/2]
+        Kd(税后)  = Kd(税前) * (1 - T)          其中 P_net = price * (1 - f)
 
     分子 = 年票面利息 + 年均资本利得(折价摊销)；
-    分母 = 面值与发行价的算术平均（近似平均占用资金）。
+    分母 = 面值与发行价（扣筹资费用后）的算术平均（近似平均占用资金）。
+
+    两法差异来源：IRR 精确法把折价摊销按复利计入整条现金流序列，
+    近似法则用算术平均近似，故两者相差数十个基点——属于方法论差异，
+    不是计算错误（详见《开发报告》"口径边界声明"）。
     """
-    if years <= 0:
+    _check_tax_rate(tax_rate)
+    f = _check_flotation(flotation_cost)
+    if int(years) <= 0:
         raise FinanceError("债券期限必须为正整数。")
+    net_price = float(price) * (1.0 - f)
+    if net_price <= 0:
+        raise FinanceError("净筹资额（发行价 × (1 - 筹资费率)）必须大于 0。")
     interest = face_value * coupon_rate
-    amortized = (face_value - price) / years
-    avg_funds = (face_value + price) / 2.0
+    amortized = (face_value - net_price) / years
+    avg_funds = (face_value + net_price) / 2.0
     k_pre = (interest + amortized) / avg_funds
     return {
         "税前年化资本成本(近似)": k_pre,
@@ -317,10 +390,11 @@ def cost_of_debt_after_tax(kd_pretax: float, tax_rate: float) -> float:
     经济含义：债务利息可在企业所得税前扣除，产生"税盾（tax shield）"，
     使债务的实际资本成本低于名义利率。这是债务融资相对于股权融资的
     核心优势，也是 MM 理论（有税）中杠杆提升企业价值的来源。
+
+    本函数既是 `cost_of_debt()` 计算税后成本的实际入口，也是对外提供的
+    独立 API（可直接对已知的税前成本做税盾换算），因此税率校验集中在此处。
     """
-    if not 0.0 <= tax_rate < 1.0:
-        raise FinanceError(f"所得税税率须在 [0, 1) 区间内，当前为 {tax_rate}。")
-    return kd_pretax * (1.0 - tax_rate)
+    return kd_pretax * (1.0 - _check_tax_rate(tax_rate))
 
 
 # =============================================================================
@@ -361,15 +435,24 @@ def capm_required_return(
     }
 
 
-def cost_of_equity_ddm(d1: float, p0: float, g: float) -> float:
+def cost_of_equity_ddm(d1: float, p0: float, g: float,
+                       flotation_cost: float = 0.0) -> float:
     """
     股利折现模型（DDM / 戈登增长模型）估算股权资本成本：
-        Ks = D1 / P0 + g
+
+        Ks = D1 / [P0 × (1 - f)] + g
+
     适用于分红稳定、增长可预期的成熟企业，可与 CAPM 结果交叉验证。
+
+    flotation_cost（筹资费率 f）：新股发行的承销费等筹资费用会抬高实际
+    股权成本，国内教材的普通股成本公式分母为"P0 × (1 - f)"；留存收益融资
+    不产生筹资费用，取 f = 0。默认 0 保持向后兼容。
     """
-    if p0 <= 0:
-        raise FinanceError("股票现价 P0 必须大于 0。")
-    return d1 / p0 + g
+    f = _check_flotation(flotation_cost)
+    net_price = float(p0) * (1.0 - f)
+    if net_price <= 0:
+        raise FinanceError("股票净筹资价（P0 × (1 - 筹资费率)）必须大于 0。")
+    return d1 / net_price + g
 
 
 # =============================================================================
@@ -427,8 +510,9 @@ def bond_price(face_value: float, coupon_rate: float, years: int,
     债券理论价格 = 票息年金现值 + 面值复利现值（现金流贴现法）。
     用于判断债券"溢价/平价/折价"发行。
     """
-    if years <= 0 or freq <= 0:
-        raise FinanceError("债券期限与付息频率必须为正整数。")
+    if int(years) <= 0:
+        raise FinanceError("债券期限必须为正整数。")
+    freq = _check_freq(freq, "每年付息次数")
     N = years * freq
     c = face_value * coupon_rate / freq
     r = ytm / freq
@@ -516,6 +600,9 @@ def amortization_schedule(principal: float, annual_rate: float,
     """
     if principal <= 0:
         raise FinanceError("贷款本金必须大于 0。")
+    _check_periods(years)
+    freq = _check_freq(freq, "每年还款次数")
+    years = int(years)
     n = years * freq
     r = annual_rate / freq
     if abs(r) < 1e-12:

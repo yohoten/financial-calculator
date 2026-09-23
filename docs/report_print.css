@@ -1,0 +1,142 @@
+/* ===========================================================================
+ * report_print.css —— 《开发报告》转 PDF 时的打印样式
+ * 由 docs/build_report_pdf.py 引用；用于 Chrome 无头打印为 A4 版式。
+ * 若要调整报告 PDF 的外观（字号、配色、边距），改这里即可，不必动 Markdown。
+ * =========================================================================== */
+
+@page {
+  size: A4;
+  margin: 18mm 16mm 18mm 16mm;
+}
+
+html { font-size: 10.5pt; }
+
+body {
+  font-family: "Microsoft YaHei", "微软雅黑", "SimSun", "宋体", sans-serif;
+  line-height: 1.7;
+  color: #1a1a1a;
+  margin: 0;
+  text-align: justify;
+}
+
+h1 {
+  font-size: 20pt;
+  text-align: center;
+  margin: 0 0 0.2em 0;
+  padding-bottom: 0.3em;
+  border-bottom: 2px solid #2c5f8a;
+  color: #1b3c5a;
+}
+
+h2 {
+  font-size: 15pt;
+  margin: 1.6em 0 0.6em 0;
+  padding: 0.25em 0 0.25em 0.5em;
+  border-left: 5px solid #2c5f8a;
+  background: #eef4f9;
+  color: #1b3c5a;
+  page-break-after: avoid;
+}
+
+h3 {
+  font-size: 12.5pt;
+  margin: 1.2em 0 0.5em 0;
+  color: #24506f;
+  page-break-after: avoid;
+}
+
+h4 {
+  font-size: 11pt;
+  margin: 1em 0 0.4em 0;
+  color: #2c5f8a;
+  page-break-after: avoid;
+}
+
+p { margin: 0.5em 0; }
+
+ul, ol { margin: 0.5em 0; padding-left: 1.8em; }
+li { margin: 0.2em 0; }
+
+/* 表格 */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8em 0;
+  font-size: 9.5pt;
+  page-break-inside: avoid;
+}
+th, td {
+  border: 1px solid #b8c9d6;
+  padding: 4px 7px;
+  vertical-align: top;
+  text-align: left;
+}
+th {
+  background: #dce8f2;
+  color: #1b3c5a;
+  font-weight: bold;
+}
+tr:nth-child(even) td { background: #f7fafc; }
+
+/* 代码 */
+code {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9.5pt;
+  background: #f2f4f6;
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  color: #1f4e79;
+}
+pre {
+  background: #f6f8fa;
+  border: 1px solid #d6dee5;
+  border-left: 4px solid #2c5f8a;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 9pt;
+  line-height: 1.55;
+  page-break-inside: avoid;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 9pt;
+  color: #24292e;
+}
+
+/* 引用块（提示 / 口径声明） */
+blockquote {
+  margin: 0.7em 0;
+  padding: 0.5em 0.9em;
+  border-left: 4px solid #d0a94a;
+  background: #fdf8ec;
+  color: #4a3c14;
+}
+blockquote p { margin: 0.3em 0; }
+
+/* 图片 */
+img {
+  max-width: 100%;
+  display: block;
+  margin: 0.6em auto;
+  border: 1px solid #d6dee5;
+}
+p:has(> img) { text-align: center; }
+
+/* 数学公式（MathML 由 Chrome 原生渲染） */
+math { font-size: 10.5pt; }
+
+/* 分隔线 */
+hr {
+  border: none;
+  border-top: 1px solid #cfd8e0;
+  margin: 1.6em 0;
+}
+
+/* 链接 */
+a { color: #1f4e79; text-decoration: none; }
+
+/* 避免标题孤行 */
+h2 + p, h3 + p { page-break-before: avoid; }

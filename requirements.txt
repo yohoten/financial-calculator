@@ -1,7 +1,17 @@
 # 项目运行依赖
-# 安装命令：python -m pip install -r requriment.txt
+# 安装命令：python -m pip install -r requirements.txt
+#
+# 版本区间依据实测环境确定（详见《开发报告》附录 A.1）：
+#   实测通过的环境：Python 3.9.13 / numpy 2.0.2 / pandas 2.3.3 /
+#                   matplotlib 3.9.4 / openpyxl 3.1.5 / pillow 11.x
+# 说明：区间而非精确锁定，避免在只有较新版本的机器上装不上；
+#      上限到下一个主版本，规避已知的破坏性变更。
 
-numpy
-pandas
-matplotlib
-openpyxl
+numpy>=2.0,<3
+pandas>=2.0,<3
+matplotlib>=3.7,<4
+openpyxl>=3.1,<4
+
+# 图形界面（gui.py）所需：界面图片缩放与截图
+# tkinter 随 Python 官方安装包自带，无需在此声明
+pillow>=10.0,<12

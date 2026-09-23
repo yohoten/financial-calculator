@@ -8,6 +8,7 @@ visualize.py —— Matplotlib 可视化模块
   2. 年金现金流时间轴：用 stem/箭头图直观呈现每期现金流方向与金额
   3. WACC 结果图：资本结构饼图 + 各来源成本贡献条形图（双联图）
   4. 敏感性分析热力图：股权成本 × 债权成本 → WACC，辅助融资决策
+  5. 自定义现金流序列图：净现金流柱形 + 滚动终值路径（支撑"自定义现金流参数"要求）
 
 工程化细节
 ----------
@@ -391,13 +392,6 @@ def plot_wacc_breakdown(
     return out_path
 
 
-def _shield_ratio(w: Dict[str, float]) -> float:
-    """由税后成本反推税前成本时使用：(1 - 税率) 的近似——此处直接用 WACC 输入关系。"""
-    k_after = w.get("税后债权成本", 0.0)
-    k_pre = w.get("_税前债权成本", k_after)     # 由调用方注入
-    return 0.0 if k_pre <= 0 else max(0.0, 1 - k_after / k_pre)
-
-
 # =============================================================================
 # 图 4：WACC 敏感性分析热力图
 # =============================================================================
@@ -530,12 +524,16 @@ def plot_debt_cost_curve(
     years: int,
     prices: Optional[Sequence[float]] = None,
     tax_rate: float = 0.25,
+    freq: int = 1,
+    flotation_cost: float = 0.0,
     title: str = "债权资本成本曲线：发行价与税后成本的关系",
 ) -> str:
     """
     绘制"发行价 → 税前/税后债务资本成本"曲线，标注平价发行点与税盾效应。
     直观解释：折价发行（价格低于面值）意味着投资者要求更高收益率，
     企业债务成本上升；同时两条曲线之间的垂直距离即为税盾带来的节省。
+
+    freq 与 flotation_cost 需与场景计算所用口径一致，否则图与表会对不上。
     """
     from core import cost_of_debt
 
@@ -544,7 +542,7 @@ def plot_debt_cost_curve(
         prices = np.linspace(face_value * 0.80, face_value * 1.10, 31)
     k_pre, k_post = [], []
     for p in prices:
-        d = cost_of_debt(face_value, coupon_rate, years, float(p), tax_rate)
+        d = cost_of_debt(face_value, coupon_rate, years, float(p), tax_rate, freq, flotation_cost)
         k_pre.append(d["税前年化资本成本"])
         k_post.append(d["税后年化资本成本"])
 
@@ -577,6 +575,95 @@ def plot_debt_cost_curve(
     ax.legend(loc="upper right", fontsize=10)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return out_path
+
+
+# =============================================================================
+# 图 7：自定义现金流序列（净现金流 + 滚动终值路径）
+# =============================================================================
+_PERIOD_LABEL = {1: "年", 2: "半年", 4: "季", 12: "月", 365: "日"}
+
+
+def _period_label(m: int) -> str:
+    """把"每年发生次数"翻译为业务语言，用于图表轴标签声明口径。"""
+    return _PERIOD_LABEL.get(int(m), f"{int(m)} 期")
+
+
+def plot_custom_cashflow(
+    cashflows: Sequence[float],
+    rate: float,
+    out_path: str,
+    path: Optional[Sequence[float]] = None,
+    periods_per_year: int = 1,
+    title: str = "自定义现金流序列：净现金流与滚动终值路径",
+) -> str:
+    """
+    自定义现金流序列图 —— 对应《实践要求（一）》"支持自定义现金流参数"。
+
+    左图：各期净现金流柱形（投入为负 → 橙色、收回为正 → 蓝色），
+          直观呈现"投入期 / 回收期"的资金进出去向；
+    右图：滚动终值路径 FV_t = FV_(t-1) × (1 + r) + CF_t，
+          展示资金随时间的积累轨迹，并标注期末终值。
+
+    参数
+    ----
+    cashflows        : 各期净现金流，第 0 期一般为负数（期初投入）
+    rate             : 每期利率（须与 cashflows 同口径）
+    path             : 可选的滚动终值路径；缺省时按同一递推式重算
+    periods_per_year : 每年现金流发生次数，仅用于轴标签的口径声明
+    """
+    _ensure_dir(out_path)
+    cf = [float(c) for c in cashflows]
+    t = np.arange(len(cf))
+    if path is None:
+        acc, path = 0.0, []
+        for i, c in enumerate(cf):
+            acc = acc * (1.0 + rate) + c if i > 0 else c
+            path.append(acc)
+    path = [float(v) for v in path]
+    span = (max(cf) - min(cf)) or 1.0
+
+    fig = plt.figure(figsize=(13, 5.2))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.2, 1.0], wspace=0.22)
+
+    # ---- 左：各期净现金流 ----
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.bar(t, cf, color=[C["primary"] if c >= 0 else C["accent"] for c in cf], width=0.55)
+    ax1.axhline(0, color=C["gray"], linewidth=1.2)
+    for xi, c in zip(t, cf):
+        ax1.text(xi, c + span * 0.035 * (1 if c >= 0 else -1), f"{c:,.0f}",
+                 ha="center", va="bottom" if c >= 0 else "top",
+                 fontsize=9.5, fontweight="bold", color=C["dark"])
+    ax1.set_xlabel(f"期数（每{_period_label(periods_per_year)}一期，第 0 期为期初）")
+    ax1.set_ylabel("净现金流（元）")
+    ax1.yaxis.set_major_formatter(FuncFormatter(_money))
+    ax1.set_title("各期净现金流（橙 = 投入｜蓝 = 收回）", loc="left")
+    ax1.grid(axis="y", linestyle="--", alpha=0.7)
+    ax1.set_axisbelow(True)
+    for s in ("top", "right"):
+        ax1.spines[s].set_visible(False)
+
+    # ---- 右：滚动终值路径 ----
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.plot(t, path, color=C["primary"], marker="o", linewidth=2.4, markersize=7,
+             label="滚动终值 FV_t")
+    ax2.fill_between(t, 0, path, color=C["primary"], alpha=0.12)
+    ax2.axhline(0, color=C["gray"], linewidth=1.0)
+    ax2.scatter([t[-1]], [path[-1]], marker="*", s=320, color=C["red"], zorder=6,
+                label=f"期末终值 {path[-1]:,.0f} 元")
+    ax2.set_xlabel("期数")
+    ax2.set_ylabel("滚动终值（元）")
+    ax2.yaxis.set_major_formatter(FuncFormatter(_money))
+    ax2.set_title("滚动终值路径 FV_t = FV_(t-1) × (1 + r) + CF_t", loc="left")
+    ax2.grid(axis="y", linestyle="--", alpha=0.7)
+    ax2.set_axisbelow(True)
+    ax2.legend(loc="upper left", fontsize=9.5)
+    for s in ("top", "right"):
+        ax2.spines[s].set_visible(False)
+
+    fig.suptitle(title, fontsize=14.5, fontweight="bold", x=0.012, ha="left", y=1.02)
     fig.savefig(out_path)
     plt.close(fig)
     return out_path

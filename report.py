@@ -29,6 +29,7 @@ report.py —— 计算结果导出引擎（Excel 汇总 / Markdown 报告）
     _wacc_dict     dict                 → 「WACC明细」
     _scenarios     list[dict]           → 「资本结构模拟」
     _schedule_df   pandas.DataFrame     → 「还款计划前24期」
+    _cashflow_df   pandas.DataFrame     → 「自定义现金流滚动路径」
 
 调用方可直接用 extra_sheets 参数显式提供附加表；两种来源会合并并按表名去重。
 """
@@ -96,6 +97,7 @@ _SHEET_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("_wacc_dict", "WACC明细"),
     ("_scenarios", "资本结构模拟"),
     ("_schedule_df", "还款计划前24期"),
+    ("_cashflow_df", "自定义现金流滚动路径"),
 )
 
 

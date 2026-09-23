@@ -12,8 +12,12 @@ test_cases.py —— 测试用例集（对应作业要求"3 个以上不同场�
   用例 5  某公司 WACC 计算           —— 三大资本来源加权、敏感性分析
   用例 6  房贷还款计划               —— 等额本息、年金公式逆向应用
 
+附加 1  AI 辅助参数校验           —— 校验层对异常输入的识别能力
+附加 2  边界输入回归               —— 六类边界必须是"中文提示"而非"Python 堆栈或静默错误"
+
 运行方式：
     python3 test_cases.py            # 执行全部用例（断言校验 + 生成用例簿）
+    退出码：全部通过为 0，存在失败项为 1（便于接入 CI 或批处理）
 """
 
 from __future__ import annotations
@@ -22,7 +26,6 @@ import os
 import sys
 
 import numpy as np
-import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -34,16 +37,22 @@ OUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 PASS, FAIL = "\033[32m✔ PASS\033[0m", "\033[31m✘ FAIL\033[0m"
-_results: list = []
+
+# 断言结果汇总：不再"首个失败即中断"，而是全部跑完后统一报告。
+# 这样一次就能看到所有偏差，也便于 gui.py 的自检按钮按"通过 N 项 / 失败 M 项"显示状态。
+_passed: list = []
+_failed: list = []
 
 
 def check(name: str, actual: float, expected: float, tol: float = 1e-4) -> None:
-    """断言两个数值在容差内相等，并打印结果。"""
+    """断言两个数值在容差内相等；记录结果并继续执行，最后由 main() 统一汇总。"""
     good = abs(actual - expected) <= tol
     print(f"  {PASS if good else FAIL}  {name:<44} 实际 = {actual:>18,.6f} | 期望 = {expected:>18,.6f}"
           f"{'' if good else f' | 差异 {abs(actual-expected):.6f}'}")
-    if not good:
-        raise AssertionError(f"{name} 校验失败：{actual} != {expected}")
+    if good:
+        _passed.append(name)
+    else:
+        _failed.append((name, actual, expected, abs(actual - expected), tol))
 
 
 def section(t: str) -> None:
@@ -167,6 +176,45 @@ def case3() -> dict:
     check("近似公式法税前成本", dap["税前年化资本成本(近似)"], 0.071795, 1e-5)
     check("平价发行时的理论价格", bp["理论价格"], 1000.0, 0.01)
 
+    # -------------------------------------------------------------------------
+    # 补充验证：半年付息（freq = 2）与筹资费率
+    # 覆盖此前"freq 参数虽已实现、但全项目仅用 freq = 1"留下的口径空白。
+    # 期望值由独立的二分法在 NPV 上复算得到，不以 core.irr 的结果为依据。
+    # -------------------------------------------------------------------------
+    print("\n【补充验证：半年付息与筹资费率的口径处理】")
+    price_h, f_ = 950, 0.02
+    d_h = core.cost_of_debt(fv_, cpn, yrs, price_h, tax, freq=2)
+    k_h = d_h["税前期间资本成本"]
+    d_f0 = core.cost_of_debt(fv_, cpn, yrs, 980, tax)
+    d_f2 = core.cost_of_debt(fv_, cpn, yrs, 980, tax, 1, f_)
+    print(f"  7) 面值 1,000、票面 6%、5 年、发行价 950、半年付息（freq = 2）：")
+    print(f"     每期票息 = 1000 × 6% / 2 = 30 元，共 10 期，解 950 = Σ 30/(1+k)^t + 1000/(1+k)^10")
+    print(f"     期间（半年）利率 k = {k_h:.6%}")
+    print(f"     年化有效利率 = (1+k)^2 - 1 = {d_h['税前年化资本成本']:.6%}；"
+          f"若误用「简单 ×2」会得到 {k_h * 2:.6%}，"
+          f"低估 {(d_h['税前年化资本成本'] - k_h * 2) * 1e4:.2f} bp")
+    print(f"  8) 税后成本三种口径：主口径 EAR×(1-T) {d_h['税后年化资本成本']:.6%}、"
+          f"严格口径 {d_h['税后年化资本成本(严格口径)']:.6%}、"
+          f"教材简化 {d_h['税后年化资本成本(教材简化)']:.6%}")
+    print(f"  9) 筹资费率：发行价 980 元在 f = 2% 下净筹资额仅 "
+          f"{d_f2['净筹资额']:,.2f} 元，税前年化成本由 {d_f0['税前年化资本成本']:.6%} "
+          f"升至 {d_f2['税前年化资本成本']:.6%}（教材一般模式 "
+          f"{core.cost_of_debt_approx(fv_, cpn, yrs, 980, tax, f_)['税前年化资本成本(近似)']:.6%}）\n")
+
+    check("半年付息·期间利率 k", k_h, 0.03604374, 1e-8)
+    check("半年付息·税前年化 EAR", d_h["税前年化资本成本"], 0.07338663, 1e-8)
+    # (1+k)^2 - 1 - 2k ≡ k²，该恒等式能精确捕捉"是否误用简单 ×2"
+    check("半年付息·年化溢价恰为 k²", d_h["税前年化资本成本"] - k_h * 2, k_h ** 2, 1e-12)
+    check("半年付息·税后主口径 EAR×(1-T)", d_h["税后年化资本成本"], 0.05503997, 1e-8)
+    check("半年付息·税后严格口径", d_h["税后年化资本成本(严格口径)"], 0.05479638, 1e-8)
+    check("半年付息·税后教材简化口径", d_h["税后年化资本成本(教材简化)"], 0.05406561, 1e-8)
+    check("年度口径下三种税后口径完全相等",
+          max(d["税后年化资本成本"], d["税后年化资本成本(严格口径)"], d["税后年化资本成本(教材简化)"])
+          - min(d["税后年化资本成本"], d["税后年化资本成本(严格口径)"], d["税后年化资本成本(教材简化)"]),
+          0.0, 1e-12)
+    check("筹资费率 f=2% 的税前年化成本", d_f2["税前年化资本成本"], 0.06964900, 1e-8)
+    check("筹资费率 f=2% 的净筹资额", d_f2["净筹资额"], 980 * (1 - f_), 1e-9)
+
     print("\n【业务解读】")
     print(f"· 虽然票面利率只有 6%，但因折价发行，企业真实的税前债务成本达 {d['税前年化资本成本']:.3%}，"
           f"高出票面利率 {(d['税前年化资本成本']-cpn)*100:.3f} 个百分点——价格折让正是对投资者的额外补偿。")
@@ -180,9 +228,14 @@ def case3() -> dict:
             "过程": [("税前债务成本(YTM)", f"{d['税前年化资本成本']:.6%}"),
                      ("税后债务成本", f"{d['税后年化资本成本']:.6%}"),
                      ("近似公式法", f"{dap['税前年化资本成本(近似)']:.6%}"),
-                     ("税盾节省(百分点)", f"{d['税盾节省(百分点)']:.4f}")],
+                     ("税盾节省(百分点)", f"{d['税盾节省(百分点)']:.4f}"),
+                     ("半年付息·期间利率 k", f"{k_h:.6%}"),
+                     ("半年付息·税前年化 EAR", f"{d_h['税前年化资本成本']:.6%}"),
+                     ("半年付息·税后主口径", f"{d_h['税后年化资本成本']:.6%}"),
+                     ("筹资费率 f=2% 税前年化", f"{d_f2['税前年化资本成本']:.6%}")],
             "结论": f"税前债务成本 {d['税前年化资本成本']:.4%}，税后 {d['税后年化资本成本']:.4%}，"
-                    f"税盾每年节省 {d['税盾节省(百分点)']:.3f} 个百分点。"}
+                    f"税盾每年节省 {d['税盾节省(百分点)']:.3f} 个百分点；"
+                    f"半年付息口径下税前年化 {d_h['税前年化资本成本']:.4%}（期间利率 {k_h:.4%}）。"}
 
 
 # =============================================================================
@@ -378,14 +431,99 @@ def case_validation() -> dict:
 
 
 # =============================================================================
+# 附加：边界输入回归（批次 B 验证清单的自动化版本）
+# =============================================================================
+def _silent(call):
+    """静默执行：屏蔽被调用函数的标准输出。用于只关心"是否被拦截"的回归断言。"""
+    import contextlib
+    import io
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        return call()
+
+
+def expect_guard(name: str, call, exc: type = core.FinanceError) -> None:
+    """断言调用被"中文守卫"拦截，而不是抛出裸 Python 异常或静默给出错误结果。
+
+    这三类失败模式的区别很关键：
+      · 期望：抛 FinanceError，消息是可直接展示给用户的中文提示；
+      · 退化：抛 ZeroDivisionError / TypeError 等 → 用户看到的是堆栈；
+      · 最糟：静默返回一个数学上成立但经济上荒谬的结果（如负的资本成本、m<0 的复利终值）。
+    """
+    try:
+        out = call()
+    except exc as ex:
+        msg = str(ex).strip()
+        good = len(msg) > 0
+        print(f"  {PASS if good else FAIL}  {name:<44} 已拦截（{exc.__name__}）：{msg[:44]}")
+        if good:
+            _passed.append(name)
+        else:
+            _failed.append((name, 0.0, 0.0, 0.0, 0.0))
+    except Exception as ex:                                  # noqa: BLE001
+        print(f"  {FAIL}  {name:<44} 抛出了未受控异常 {type(ex).__name__}: {ex}")
+        _failed.append((name, 0.0, 0.0, 0.0, 0.0))
+    else:
+        print(f"  {FAIL}  {name:<44} 未被拦截，反而返回了 {out!r}")
+        _failed.append((name, 0.0, 0.0, 0.0, 0.0))
+
+
+def case_boundary() -> dict:
+    section("附加测试 2 | 边界输入回归：应被中文提示拦截的输入")
+    import main
+    import validators as vd
+
+    print("  以下每一项在修复前都会抛出裸异常、或静默返回无意义的结果。\n")
+    expect_guard("复利/现值：每年计息次数 m = 0", lambda: core.fv_compound(100, 0.05, 10, 0))
+    expect_guard("复利/现值：每年计息次数 m = -1", lambda: core.fv_compound(100, 0.05, 10, -1))
+    expect_guard("实际年利率：m 非整数（1.5）", lambda: core.effective_annual_rate(0.05, 1.5))
+    expect_guard("债务成本：所得税税率 = 1.5", lambda: core.cost_of_debt(1000, 0.06, 5, 980, 1.5))
+    expect_guard("近似公式法：所得税税率 = -0.1",
+                 lambda: core.cost_of_debt_approx(1000, 0.06, 5, 980, -0.1))
+    expect_guard("债务成本：筹资费率 = 1.2",
+                 lambda: core.cost_of_debt(1000, 0.06, 5, 980, 0.25, 1, 1.2))
+    expect_guard("WACC：三类资本金额均为 0", lambda: core.wacc(0, 0, 0.10, 0.05))
+    expect_guard("WACC 场景：三类资本金额均为 0（修复前为 ZeroDivisionError）",
+                 lambda: _silent(lambda: main.scene_wacc(False, {"equity": 0, "debt": 0, "pref": 0})))
+    expect_guard("永续年金：增长率 g ≥ 折现率 r", lambda: core.pv_perpetuity(1000, 0.05, 0.06))
+    expect_guard("还款计划：每年还款次数 = 0",
+                 lambda: core.amortization_schedule(1_000_000, 0.042, 20, 0))
+    expect_guard("自定义现金流：仅 1 期，构不成序列", lambda: main._parse_cashflows("1000"))
+
+    print("\n  利率解读的口径分支（不抛异常，但文案必须是正确口径）：")
+    low = " ".join(vd.interpret_tvm("复利终值", {"rate": -0.03, "years": 10, "amount": 100}, 73.74))
+    neg_ok = ("不存在" in low) and ("720000" not in low)
+    print(f"  {PASS if neg_ok else FAIL}  {'负利率解读不再输出荒谬的翻番年数':<44} {low[:34]}…")
+    (_passed if neg_ok else _failed).append("负利率解读不含荒谬翻番年数")
+
+    per = " ".join(vd.interpret_tvm("年金现值", {"rate": 0.08, "periods": 10, "amount": 10000},
+                                    67100.8, periods_per_year=12, period_unit="月"))
+    per_ok = ("期利率口径" in per) and ("年化有效利率（EAR）" in per) and ("每 9.0 年翻一番" not in per)
+    print(f"  {PASS if per_ok else FAIL}  {'期利率口径明确声明并给出折合年化利率':<44} {per[:34]}…")
+    (_passed if per_ok else _failed).append("期利率口径声明正确")
+
+    print("\n【结论】")
+    print("· 全部边界输入均以中文 FinanceError 或口径声明收场，不再出现 ZeroDivisionError")
+    print("  堆栈，也不存在「静默返回错误结果」的情形，符合「非法输入在计算前被拦截」的设计承诺。")
+    return {"名称": "附加测试2 边界输入回归",
+            "参数": {"覆盖边界项数": 13},
+            "过程": [("m = 0 / m = -1", "已拦截"), ("tax_rate = 1.5 / -0.1", "已拦截"),
+                     ("筹资费率 f = 1.2", "已拦截"), ("资本总额 = 0", "已拦截"),
+                     ("g ≥ r", "已拦截"), ("freq = 0", "已拦截"),
+                     ("现金流序列仅 1 期", "已拦截"),
+                     ("负利率解读", "改为缩水口径"), ("期利率口径解读", "声明口径 + 折合年化")],
+            "结论": "11 项边界输入 + 2 项解读口径全部符合预期，无未受控异常、无静默错误。"}
+
+
+# =============================================================================
 # 主入口
 # =============================================================================
 def main() -> None:
     print("\n" + "═" * 96)
-    print("  货币时间价值与资本成本计算器 —— 测试用例集（共 6 组主用例 + 1 组校验测试）")
+    print("  货币时间价值与资本成本计算器 —— 测试用例集（共 6 组主用例 + 2 组附加测试）")
     print("═" * 96)
 
-    cases = [case1, case2, case3, case4, case5, case6, case_validation]
+    cases = [case1, case2, case3, case4, case5, case6, case_validation, case_boundary]
     records = []
     for fn in cases:
         records.append(fn())
@@ -394,8 +532,17 @@ def main() -> None:
     path = os.path.join(OUT_DIR, "10_测试用例明细.xlsx")
     rp.export_casebook(records, path)
 
+    total = len(_passed) + len(_failed)
     section("全部测试用例执行完毕")
-    print(f"  ✔ 数值断言全部通过（与教材系数表、解析解逐项比对）")
+    if _failed:
+        print(f"  ✘ 通过 {len(_passed)} 项 / 失败 {len(_failed)} 项（共 {total} 项数值断言）")
+        for name, actual, expected, diff, tol in _failed:
+            print(f"      · {name}：实际 {actual:.10f} vs 期望 {expected:.10f}"
+                  f"，差异 {diff:.3e} > 容差 {tol:.0e}")
+        print("      请先核对失败项的舍入顺序与口径（先算后舍 / 倒挤），不要放宽容差迁就实现。")
+    else:
+        print(f"  ✔ 通过 {len(_passed)} 项 / 失败 {len(_failed)} 项（共 {total} 项数值断言）")
+    print(f"  ✔ 数值断言与教材系数表、解析解逐项比对")
     print(f"  ✔ 测试用例明细已导出：{os.path.relpath(path, BASE_DIR)}")
     print(f"  ✔ 共 {len(cases)} 组用例，覆盖第 3 章（复利、年金）与第 4 章（债务、股权、WACC）全部知识点")
     print()
@@ -403,3 +550,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    sys.exit(1 if _failed else 0)

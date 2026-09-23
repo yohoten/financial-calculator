@@ -22,14 +22,16 @@ validators.py —— AI 辅助的智能参数校验与业务场景解释模块
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 __all__ = [
     "ValidationResult",
-    "Rule",
     "validate",
     "RULES",
+    "check_wacc_weights",
+    "check_beta_sanity",
     "interpret_wacc",
     "interpret_tvm",
     "interpret_debt",
@@ -70,17 +72,6 @@ class ValidationResult:
 # =============================================================================
 # 校验规则定义（声明式，便于扩展）
 # =============================================================================
-@dataclass
-class Rule:
-    """单条校验规则。"""
-    name: str
-    kind: str        # "error" | "warning" | "hint"
-    test: str        # 规则的自然语言描述（用于生成错误提示）
-    lo: Optional[float] = None
-    hi: Optional[float] = None
-    message: str = ""
-
-
 # 参数 -> 适用规则。区间单位为"输入值本身的单位"（利率为小数）。
 RULES: Dict[str, Dict[str, Any]] = {
     # ---------- 利率类（小数形式，0.05 = 5%） ----------
@@ -228,20 +219,6 @@ def validate(field_name: str, value: Any, rules: Dict[str, Any] = None) -> Valid
     return r
 
 
-def validate_all(params: Dict[str, Any]) -> ValidationResult:
-    """
-    批量校验一组参数（CLI 与批处理共用入口）。
-    """
-    total = ValidationResult()
-    for k, v in params.items():
-        one = validate(k, v)
-        total.errors += one.errors
-        total.warnings += one.warnings
-        if one.errors:
-            total.ok = False
-    return total
-
-
 def check_wacc_weights(wd: float, we: float, wp: float = 0.0,
                        tol: float = 1e-6) -> ValidationResult:
     """
@@ -344,28 +321,105 @@ def interpret_wacc(w: Dict[str, float], industry_avg: float = 0.10,
     return out
 
 
-def interpret_tvm(kind: str, inputs: Dict[str, float], result: float) -> List[str]:
-    """复利/年金结果的时间价值解读。"""
+def interpret_tvm(
+    kind: str,
+    inputs: Dict[str, float],
+    result: float,
+    *,
+    periods_per_year: Optional[int] = None,
+    period_unit: str = "年",
+) -> List[str]:
+    """
+    复利/年金结果的时间价值解读。
+
+    口径约定（二选一，必须由调用方显式声明，函数内部不做隐性换算）
+    ------------------------------------------------------------
+    * ``periods_per_year is None``（默认）——``inputs["rate"]`` 是**年化利率**，
+      ``inputs["periods"] / inputs["years"]`` 视为**年数**。只有该口径下才允许
+      出现"72 法则""每 N 年翻一番""N 年内的增长倍数"这类表述。
+    * ``periods_per_year = m`` —— ``inputs["rate"]`` 是**期利率**（每期利率），
+      期数为 ``inputs["periods"]``。此时解读必须同时给出"期利率 / 期数 / 折合年化
+      利率 / 折合年数"四个量，并声明口径；**不得套用 72 法则**——72 法则的成立
+      前提是年化复利口径，把它套在期利率上会产生量级错误（例如月利率 0.67%
+      会被说成"年化 0.67%"）。
+
+    参数
+    ----
+    kind             : 场景名，如 "复利终值" / "年金现值" / "预付年金现值"
+    inputs           : {"rate": 利率, "periods" 或 "years": 期数/年数, "amount": 本金或每期金额}
+    result           : 计算得到的现值/终值，用于计算占比
+    periods_per_year : 每年计息/收付次数；传入即表示 rate 为期利率
+    period_unit      : 期利率口径下每期的自然语言单位（"月" / "季" / "年"）
+
+    返回
+    ----
+    逐行解读文本
+    """
     out: List[str] = []
     r = inputs.get("rate")
     n = inputs.get("periods") or inputs.get("years")
+
     if r is not None and n is not None:
-        out.append(
-            f"在年化利率 {r:.2%} 下，资金约每 {72 / (max(r, 1e-6) * 100):.1f} 年翻一番"
-            f"（按“72 法则”快速估算），{n:.0f} 年内的增长倍数约为 {(1 + r) ** n:.2f} 倍。"
-        )
+        if periods_per_year is None:
+            # ---------- 年化口径：允许 72 法则 ----------
+            if r > 0.02:
+                out.append(
+                    f"在年化利率 {r:.2%} 下，资金约每 {72 / (r * 100):.1f} 年翻一番"
+                    f"（按“72 法则”快速估算），{n:.0f} 年内的增长倍数约为 {(1 + r) ** n:.2f} 倍。"
+                )
+            elif r > 0:
+                # 72 法则仅对约 5%~20% 的年利率近似良好；低利率区间误差迅速放大
+                exact = math.log(2) / math.log1p(r)
+                out.append(
+                    f"年化利率 {r:.2%} 偏低，“72 法则”在该区间误差较大（估算 "
+                    f"{72 / (r * 100):.0f} 年 vs 精确 {exact:.1f} 年），不再套用；"
+                    f"{n:.0f} 年内的复利增长倍数约为 {(1 + r) ** n:.2f} 倍。"
+                )
+            else:
+                # r <= 0 时不存在"翻番"概念，72 法则不成立
+                out.append(
+                    f"年化利率为负（{r:.2%}），资金 {n:.0f} 年后缩水至本金的 {(1 + r) ** n:.2%}；"
+                    f"此情形下不存在“翻番”概念，“72 法则”不成立。负利率对应通货紧缩或"
+                    f"资产实际贬值的极端情形，解读时应关注购买力而非名义金额。"
+                )
+        else:
+            # ---------- 期利率口径：先声明口径，不做隐性换算 ----------
+            m = int(periods_per_year)
+            ear = (1.0 + r) ** m - 1.0
+            total_years = n / m
+            out.append(
+                f"口径声明：以下按【期利率口径】解读——每期利率 {r:.4%}（按{period_unit}计息）、"
+                f"共 {n:.0f} 期，折合年数 {total_years:.2f} 年，"
+                f"折合年化有效利率（EAR）{(1.0 + r) ** m - 1.0:.2%}（而非 {r:.4%}）。"
+                f"“72 法则”只适用于年化口径，此处不套用。"
+            )
+            out.append(
+                f"期内的累计增长倍数为 {(1.0 + r) ** n:.4f} 倍"
+                f"（= (1 + {r:.4%})^{n:.0f}），这是 {n:.0f} 期复利后的总倍数。"
+            )
+
     if kind.startswith("复利终值"):
         pv = inputs.get("amount", 0)
-        out.append(
-            f"期初投入 {pv:,.2f} 元，到期金额 {result:,.2f} 元，"
-            f"其中利息收益 {result - pv:,.2f} 元，占比 {(result - pv) / pv:.1%}。"
-        )
+        if pv:
+            out.append(
+                f"期初投入 {pv:,.2f} 元，到期金额 {result:,.2f} 元，"
+                f"其中利息收益 {result - pv:,.2f} 元，占比 {(result - pv) / pv:.1%}。"
+            )
+    elif kind.startswith("复利现值"):
+        fv = inputs.get("amount", 0)
+        if fv:
+            out.append(
+                f"未来可收回 {fv:,.2f} 元，按上述口径折现后今天的价值为 {result:,.2f} 元，"
+                f"折现掉的部分 {fv - result:,.2f} 元（{(fv - result) / fv:.1%}）就是等待的时间成本。"
+            )
     elif "年金" in kind:
         pmt = inputs.get("amount", 0)
         total = pmt * (n or 0)
+        unit = period_unit if periods_per_year is not None else "年"
         out.append(
             f"累计投入 {total:,.2f} 元，{'现值' if '现值' in kind else '终值'}为 {result:,.2f} 元；"
-            f"每期收付发生在{'期初（预付年金，比普通年金多赚一期利息）' if '预付' in kind else '期末（普通年金）'}。"
+            f"每期收付发生在{'期初（预付年金，比普通年金多赚一期利息）' if '预付' in kind else '期末（普通年金）'}，"
+            f"期数单位为“{unit}”。"
         )
     return out
 
