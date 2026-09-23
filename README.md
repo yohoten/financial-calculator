@@ -28,7 +28,7 @@ python test_cases.py
 python main.py --gui
 ```
 
-Windows 下也可以直接**双击 `财务计算器GUI.pyw`** 打开图形界面（无控制台窗口）。
+Windows 下也可以直接**双击 `financial_calculator_gui.pyw`** 打开图形界面（无控制台窗口）。
 
 ---
 
@@ -36,29 +36,29 @@ Windows 下也可以直接**双击 `财务计算器GUI.pyw`** 打开图形界面
 
 ```
 financial_calculator/
-├── README.md                    本文件
-├── requirements.txt             依赖（带版本区间）
-├── 财务计算器GUI.pyw             双击启动器（pythonw，无控制台）
+├── README.md                     本文件
+├── requirements.txt              依赖（带版本区间）
+├── financial_calculator_gui.pyw  双击启动器（pythonw，无控制台）
 │
-├── core.py                      【计算层】20 个公开函数/类，纯函数、无 I/O
-├── validators.py                【校验层】三层校验规则库 + 4 类业务解读引擎
-├── visualize.py                 【表现层】7 类 Matplotlib 图表生成函数
-├── report.py                    【表现层】Excel / Markdown / 用例簿导出
-├── main.py                      【交互层】命令行菜单 + 7 大场景编排
-├── gui.py                       【表现层】tkinter 图形界面（7 个场景页 + 总览页）
-├── test_cases.py                【测试层】6 组业务用例 + 2 组附加测试（51 项断言）
+├── core.py                       【计算层】20 个公开函数/类，纯函数、无 I/O
+├── validators.py                 【校验层】三层校验规则库 + 4 类业务解读引擎
+├── visualize.py                  【表现层】7 类 Matplotlib 图表生成函数
+├── report.py                     【表现层】Excel / Markdown / 用例簿导出
+├── main.py                       【交互层】命令行菜单 + 7 大场景编排
+├── gui.py                        【表现层】tkinter 图形界面（7 个场景页 + 总览页）
+├── test_cases.py                 【测试层】6 组业务用例 + 2 组附加测试（51 项断言）
 │
-├── docs/                        文档（原目录名 dosc 为拼写错误，已更正）
+├── docs/                         文档（原目录名 dosc 为拼写错误，已更正）
 │   ├── 开发报告.md / .pdf        完整开发报告
 │   ├── GUI开发说明与建议.md      图形界面的架构决策与踩坑清单
-│   ├── figures/                 报告插图（10 张 PNG，随仓库提交）
-│   └── excel/                   汇总表格成品（3 份 XLSX）
+│   ├── figures/                  报告插图（10 张 PNG，随仓库提交）
+│   └── excel/                    汇总表格成品（3 份 XLSX）
 │
-├── legacy/                      历史单文件版（仅供对照，不再维护）
+├── legacy/                       历史单文件版（仅供对照，不再维护）
 │   ├── README.md
 │   └── financial_calculator.pyw
 │
-└── outputs/                     运行产物（每次运行重建，不入库）
+└── outputs/                      运行产物（每次运行重建，不入库）
 ```
 
 ---
@@ -71,7 +71,7 @@ financial_calculator/
 | `python main.py --demo` | 一键运行全部 7 个场景，生成 10 张 PNG + 3 份 XLSX + 1 份 Markdown |
 | `python main.py --scene 5` | 直接运行指定编号场景（1~7，非交互，适合批量调度） |
 | `python main.py --gui` | 启动 tkinter 图形界面（不改变上述命令行功能） |
-| `python 财务计算器GUI.pyw` | 等价于 `--gui`，双击即可（无控制台窗口） |
+| `python financial_calculator_gui.pyw` | 等价于 `--gui`，双击即可（无控制台窗口） |
 | `python gui.py --check` | 界面环境自检（tkinter / Pillow / 中文字体 / 输出目录） |
 | `python gui.py --screenshot 路径` | 无人工干预渲染界面并截图（报告插图用） |
 | `python test_cases.py` | 执行测试用例集，输出断言结果与用例明细；全部通过退出码 0 |

@@ -12,7 +12,7 @@
 | 文件 | 状态 | 说明 |
 | --- | --- | --- |
 | `gui.py` | **新增** | 图形界面模块：执行适配层 + **7 个场景页** + 总览页 + 主窗口 |
-| `财务计算器GUI.pyw` | **新增** | 双击启动器（pythonw 方式，无黑色控制台窗口） |
+| `financial_calculator_gui.pyw` | **新增** | 双击启动器（pythonw 方式，无黑色控制台窗口） |
 | `main.py` | 修改 | ① 新增 `--gui` 参数；② 修复 `_USE_COLOR` 在 pythonw 下会崩的隐患；③ 新增场景 7 |
 | `requirements.txt` | 修改 | 补充 `pillow`（界面图片缩放与截图功能所需）；版本改为区间声明 |
 | `report.py` | 上一轮新增 | 导出引擎（本次未改动） |
@@ -32,14 +32,14 @@
 改动后**没有删除任何命令行能力**：
 
 ```bash
-python main.py                # 交互式菜单（原有）
-python main.py --demo         # 一键运行全部场景（原有）
-python main.py --scene 3      # 直接运行指定场景（原有，范围 1~7）
-python main.py --gui          # 图形界面（新增）
-python gui.py                 # 图形界面（新增，等价写法）
-双击 财务计算器GUI.pyw         # 图形界面（新增，无控制台窗口）
-python gui.py --screenshot 路径   # 生成界面截图，供报告插图（新增）
-python gui.py --check         # 依赖与字体自检（新增）
+python main.py                     # 交互式菜单（原有）
+python main.py --demo              # 一键运行全部场景（原有）
+python main.py --scene 3           # 直接运行指定场景（原有，范围 1~7）
+python main.py --gui               # 图形界面（新增）
+python gui.py                      # 图形界面（新增，等价写法）
+双击 financial_calculator_gui.pyw  # 图形界面（新增，无控制台窗口）
+python gui.py --screenshot 路径    # 生成界面截图，供报告插图（新增）
+python gui.py --check              # 依赖与字体自检（新增）
 ```
 
 ---
@@ -72,8 +72,8 @@ def capture(name, call, out_dir=None) -> RunOutput:
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):     # 捕获 CLI 的 print
         summary = call()
-    text = strip_ansi(buffer.getvalue())         # 去掉 ANSI 颜色码
-    figures, files = _collect_outputs(out_dir, started)   # 按修改时间采集产物
+    text = strip_ansi(buffer.getvalue())                 # 去掉 ANSI 颜色码
+    figures, files = _collect_outputs(out_dir, started)  # 按修改时间采集产物
     return RunOutput(name, text, figures, files, summary)
 ```
 
@@ -251,7 +251,7 @@ pyinstaller --noconfirm --windowed --name 财务计算器 ^
 python gui.py --check
 
 # 启动图形界面
-python gui.py                 # 等价于双击 财务计算器GUI.pyw
+python gui.py                 # 等价于双击 financial_calculator_gui.pyw
 python main.py --gui          # 等价写法
 
 # 命令行回归（确认 GUI 改动没影响原功能）

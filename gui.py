@@ -21,14 +21,15 @@ gui.py —— 财务计算器图形界面（tkinter）
     总览页  一键运行全部场景 / 运行数值自检 / 打开输出目录 / 使用说明
     场景页  1 复利终值·现值   2 年金终值·现值   3 债权资本成本
             4 股权资本成本     5 WACC           6 贷款还款计划
+            7 永续年金·现金流
     每个场景页：左侧参数表单 → 校验 → 计算 → 右侧结果文本 + 图表预览
 
 运行方式
 --------
-    python main.py --gui            # 从命令行入口启动图形界面
-    python gui.py                   # 直接启动图形界面
-    双击 财务计算器GUI.pyw           # 无控制台窗口启动
-    python gui.py --screenshot 路径  # 生成界面截图（用于报告插图）
+    python main.py --gui              # 从命令行入口启动图形界面
+    python gui.py                     # 直接启动图形界面
+    双击 financial_calculator_gui.pyw  # 无控制台窗口启动
+    python gui.py --screenshot 路径    # 生成界面截图（用于报告插图）
 
 命令行功能完全保留：``python main.py``（交互菜单）、``--demo``、``--scene N``。
 """
